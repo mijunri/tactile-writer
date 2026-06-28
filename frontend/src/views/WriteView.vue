@@ -126,7 +126,7 @@ async function createArticle() {
 
 async function loadArticle() {
   if (!articleId.value) return
-  const { data } = await api.get(`/articles/${articleId.value}`)
+        const { data } = await api.get(`/articles/work/${articleId.value}`)
   article.value = data
 }
 
@@ -134,7 +134,7 @@ async function loadHistory() {
   if (!articleId.value) return
   loadingHistory.value = true
   try {
-    const { data } = await api.get(`/articles/${articleId.value}/chat/history`)
+    const { data } = await api.get(`/articles/work/${articleId.value}/chat/history`)
     messages.value = data
     await nextTick()
     scrollBottom()
@@ -146,7 +146,7 @@ async function loadHistory() {
 async function pollStatus() {
   if (!articleId.value) return
   try {
-    const { data } = await api.get(`/articles/${articleId.value}/chat/status`)
+    const { data } = await api.get(`/articles/work/${articleId.value}/chat/status`)
     if (article.value) {
       article.value.status = data.work_status || article.value.status
       article.value.sandbox_status = data.sandbox_status
@@ -170,7 +170,7 @@ async function sendMessage() {
   scrollBottom()
   sending.value = true
   try {
-    await api.post(`/articles/${articleId.value}/chat/send`, { content })
+        await api.post(`/articles/work/${articleId.value}/chat/send`, { content })
     await loadHistory()
   } catch (e) {
     ElMessage.error(e.response?.data?.detail || '发送失败')

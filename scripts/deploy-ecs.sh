@@ -8,6 +8,24 @@ JWT_SECRET="${JWT_SECRET:-$(openssl rand -hex 32)}"
 TACTILE_API_BASE="${TACTILE_API_BASE:-http://118.31.57.25/tactile/api}"
 WRITER_PORT="${WRITER_PORT:-8082}"
 
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+if [ -f "$ROOT/infra/tactile-prod.env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$ROOT/infra/tactile-prod.env"
+  set +a
+fi
+if [ -f "$ROOT/infra/state.json" ]; then
+  TACTILE_WORKSPACE_ID="$(python3 -c "import json; print(json.load(open('$ROOT/infra/state.json'))['workspace_id'])")"
+  TACTILE_AGENT_ID="$(python3 -c "import json; print(json.load(open('$ROOT/infra/state.json'))['agent_id'])")"
+fi
+TACTILE_API_BASE="${TACTILE_API_BASE:-https://cloudagentlab.com/api}"
+TACTILE_SERVICE_EMAIL="${TACTILE_SERVICE_EMAIL:-}"
+TACTILE_SERVICE_PASSWORD="${TACTILE_SERVICE_PASSWORD:-}"
+MOXIE_UPLOAD_TOKEN="${MOXIE_UPLOAD_TOKEN:-}"
+TACTILE_WORKSPACE_ID="${TACTILE_WORKSPACE_ID:-0}"
+TACTILE_AGENT_ID="${TACTILE_AGENT_ID:-0}"
+
 echo "==> Deploying tactile-writer to ${ECS_IP}:${WRITER_PORT}"
 
 # Upload latest code to OSS (fast download from ECS in same VPC)
@@ -69,6 +87,11 @@ cp -r dist/* "\$DEPLOY_DIR/backend/static/"
 echo "==> Environment"
 cat > "\$DEPLOY_DIR/backend/.env" <<ENVFILE
 TACTILE_API_BASE=${TACTILE_API_BASE}
+TACTILE_SERVICE_EMAIL=${TACTILE_SERVICE_EMAIL}
+TACTILE_SERVICE_PASSWORD=${TACTILE_SERVICE_PASSWORD}
+TACTILE_WORKSPACE_ID=${TACTILE_WORKSPACE_ID}
+TACTILE_AGENT_ID=${TACTILE_AGENT_ID}
+MOXIE_UPLOAD_TOKEN=${MOXIE_UPLOAD_TOKEN}
 JWT_SECRET=${JWT_SECRET}
 DATABASE_URL=sqlite+aiosqlite:///./data/writer.db
 CORS_ORIGINS=*

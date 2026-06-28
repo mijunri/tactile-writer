@@ -3,6 +3,7 @@ import LoginView from '../views/LoginView.vue'
 import DashboardView from '../views/DashboardView.vue'
 import WriteView from '../views/WriteView.vue'
 import ScheduleView from '../views/ScheduleView.vue'
+import ArticleView from '../views/ArticleView.vue'
 
 const router = createRouter({
   history: createWebHistory('/writer/'),
@@ -10,6 +11,7 @@ const router = createRouter({
     { path: '/login', name: 'login', component: LoginView, meta: { guest: true } },
     { path: '/', name: 'dashboard', component: DashboardView },
     { path: '/write/:id?', name: 'write', component: WriteView },
+    { path: '/article/:id', name: 'article', component: ArticleView },
     { path: '/schedules', name: 'schedules', component: ScheduleView },
   ],
 })

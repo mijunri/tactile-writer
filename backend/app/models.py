@@ -15,11 +15,19 @@ class PlatformUser(Base):
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255))
     display_name: Mapped[str] = mapped_column(String(100), default="")
-    tactile_user_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    tactile_token: Mapped[str | None] = mapped_column(Text, nullable=True)
-    tactile_workspace_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    tactile_agent_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     create_time: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     update_time: Mapped[datetime] = mapped_column(
         DateTime, server_default=func.now(), onupdate=func.now()
     )
+
+
+class SavedArticle(Base):
+    __tablename__ = "saved_article"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    title: Mapped[str] = mapped_column(String(500))
+    platform: Mapped[str] = mapped_column(String(100), default="微信公众号")
+    html_content: Mapped[str] = mapped_column(Text)
+    work_item_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    creator_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    create_time: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

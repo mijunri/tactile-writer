@@ -6,6 +6,7 @@ venv/
 node_modules/
 dist/
 backend/static/
+infra/tactile-prod.env
 *.db
 .DS_Store
 .idea/
