@@ -69,6 +69,19 @@ def _extract_html(text: str) -> str | None:
     return None
 
 
+def _clean_draft_content(text: str) -> str:
+    text = _strip_meta(text)
+    heading = re.search(r"(^|\n)(#\s+.+)", text, re.MULTILINE)
+    if heading:
+        return text[heading.start(2) :].strip()
+
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        if re.search(r"[\u4e00-\u9fff]", line):
+            return "\n".join(lines[i:]).strip()
+    return text.strip()
+
+
 def extract_article_draft(messages: list[dict[str, Any]], title: str = "") -> dict[str, Any]:
     assistant_parts = [
         _strip_meta(m["content"])
@@ -77,7 +90,8 @@ def extract_article_draft(messages: list[dict[str, Any]], title: str = "") -> di
     ]
     content = ""
     if assistant_parts:
-        content = max(assistant_parts, key=len).strip()
+        raw = max(assistant_parts, key=len).strip()
+        content = _clean_draft_content(raw)
 
     html = _extract_html(content) if content else None
     plain = re.sub(r"<[^>]+>", "", content) if html else content
@@ -102,7 +116,7 @@ def extract_article_draft(messages: list[dict[str, Any]], title: str = "") -> di
 def build_chat_display(messages: list[dict[str, Any]], draft_content: str) -> list[dict[str, Any]]:
     """Chat panel: shorten long assistant replies that are the article body."""
     display: list[dict[str, Any]] = []
-    draft_norm = draft_content.strip()
+    draft_norm = _clean_draft_content(draft_content)
 
     for msg in messages:
         role = msg.get("role", "assistant")
@@ -111,7 +125,7 @@ def build_chat_display(messages: list[dict[str, Any]], draft_content: str) -> li
             display.append({"role": "user", "content": content, "index": msg.get("index")})
             continue
 
-        if draft_norm and content.strip() == draft_norm:
+        if draft_norm and _clean_draft_content(content.strip()) == draft_norm:
             display.append(
                 {
                     "role": "assistant",
