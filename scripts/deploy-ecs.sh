@@ -17,10 +17,11 @@ rm -rf /tmp/tactile-writer-pkg
 cp -a "$(cd "$(dirname "$0")/.." && pwd)" /tmp/tactile-writer-pkg
 rm -rf /tmp/tactile-writer-pkg/.git /tmp/tactile-writer-pkg/frontend/node_modules /tmp/tactile-writer-pkg/backend/.venv /tmp/tactile-writer-pkg/backend/data
 (cd /tmp && zip -rq "$ZIP" tactile-writer-pkg)
-python3 - "$ZIP" <<'PY'
+pip install -q oss2 2>/dev/null || true
+python3 - "$ZIP" <<'PY' || echo "WARN: OSS upload failed, using existing package on OSS"
 import sys, os, oss2
 auth = oss2.Auth(os.environ['ALIYUN_ACCESS_KEY_ID'], os.environ['ALIYUN_ACCESS_KEY_SECRET'])
-bucket = oss2.Bucket(auth, 'https://oss-cn-hangzhou.aliyuncs.com', 'imjson-cn')
+bucket = oss2.Bucket(auth, 'https://oss-cn-hangzhou.aliyuncs.com', 'imjson-cn', connect_timeout=30)
 bucket.put_object_from_file('deploy/tactile-writer-main.zip', sys.argv[1])
 print('OSS upload OK')
 PY
@@ -114,8 +115,15 @@ NGINX
 NGINX_SITE="/etc/nginx/sites-enabled/api.imjson.cn"
 if ! grep -q "tactile-writer" "\$NGINX_SITE" 2>/dev/null; then
   sed -i '/# tactile-app-managed/i\\    # tactile-writer\\n    include /etc/nginx/snippets/tactile-writer.conf;' "\$NGINX_SITE"
-  nginx -t && systemctl reload nginx
 fi
+
+# IP 直连走 default_server (data-air-tran)
+DEFAULT_SITE="/etc/nginx/sites-enabled/data-air-tran"
+if [ -f "\$DEFAULT_SITE" ] && ! grep -q "tactile-writer" "\$DEFAULT_SITE" 2>/dev/null; then
+  sed -i '/server {/a\\    include /etc/nginx/snippets/tactile-writer.conf;' "\$DEFAULT_SITE"
+fi
+
+nginx -t && systemctl reload nginx
 
 sleep 3
 curl -sf "http://127.0.0.1:\${WRITER_PORT}/api/health" && echo " health OK"
