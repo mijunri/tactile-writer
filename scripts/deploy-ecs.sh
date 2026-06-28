@@ -10,6 +10,21 @@ WRITER_PORT="${WRITER_PORT:-8082}"
 
 echo "==> Deploying tactile-writer to ${ECS_IP}:${WRITER_PORT}"
 
+# Upload latest code to OSS (fast download from ECS in same VPC)
+echo "==> Uploading package to OSS"
+ZIP="/tmp/tactile-writer-deploy.zip"
+rm -rf /tmp/tactile-writer-pkg
+cp -a "$(cd "$(dirname "$0")/.." && pwd)" /tmp/tactile-writer-pkg
+rm -rf /tmp/tactile-writer-pkg/.git /tmp/tactile-writer-pkg/frontend/node_modules /tmp/tactile-writer-pkg/backend/.venv /tmp/tactile-writer-pkg/backend/data
+(cd /tmp && zip -rq "$ZIP" tactile-writer-pkg)
+python3 - "$ZIP" <<'PY'
+import sys, os, oss2
+auth = oss2.Auth(os.environ['ALIYUN_ACCESS_KEY_ID'], os.environ['ALIYUN_ACCESS_KEY_SECRET'])
+bucket = oss2.Bucket(auth, 'https://oss-cn-hangzhou.aliyuncs.com', 'imjson-cn')
+bucket.put_object_from_file('deploy/tactile-writer-main.zip', sys.argv[1])
+print('OSS upload OK')
+PY
+
 REMOTE_SCRIPT="/tmp/tactile-writer-deploy-$$.sh"
 cat > "$REMOTE_SCRIPT" <<REMOTE
 #!/bin/bash
@@ -17,28 +32,23 @@ set -eu
 DEPLOY_DIR="/opt/tactile-writer"
 WRITER_PORT=${WRITER_PORT}
 
-apt-get install -y -qq unzip curl rsync 2>/dev/null || true
+apt-get install -y -qq unzip curl rsync python3-venv 2>/dev/null || true
 
-echo "==> Download repo"
+OSS_URL="https://imjson-cn.oss-cn-hangzhou-internal.aliyuncs.com/deploy/tactile-writer-main.zip"
+OSS_URL_PUBLIC="https://imjson-cn.oss-cn-hangzhou.aliyuncs.com/deploy/tactile-writer-main.zip"
+
+echo "==> Download repo from OSS"
 mkdir -p "\$DEPLOY_DIR"
-if [ -d "\$DEPLOY_DIR/backend" ]; then
-  echo "Existing install found, updating..."
+curl -fsSL -m 120 -o /tmp/tactile-writer.zip "\$OSS_URL" || curl -fsSL -m 120 -o /tmp/tactile-writer.zip "\$OSS_URL_PUBLIC"
+rm -rf /tmp/tactile-writer-main /tmp/tactile-writer-pkg
+unzip -qo /tmp/tactile-writer.zip -d /tmp
+if [ -d /tmp/tactile-writer-pkg ]; then SRC=/tmp/tactile-writer-pkg; else SRC=/tmp/tactile-writer-main; fi
+if [ -d "\$DEPLOY_DIR/backend/data" ]; then
   cp -a "\$DEPLOY_DIR/backend/data" /tmp/writer-data-bak 2>/dev/null || true
-  curl -fsSL -o /tmp/tactile-writer.zip "https://github.com/mijunri/tactile-writer/archive/refs/heads/main.zip"
-  rm -rf /tmp/tactile-writer-main
-  unzip -qo /tmp/tactile-writer.zip -d /tmp
-  rsync -a --delete /tmp/tactile-writer-main/ "\$DEPLOY_DIR/"
-  mkdir -p "\$DEPLOY_DIR/backend/data"
-  cp -a /tmp/writer-data-bak/* "\$DEPLOY_DIR/backend/data/" 2>/dev/null || true
-else
-  for i in 1 2 3; do
-    curl -fsSL -o /tmp/tactile-writer.zip "https://github.com/mijunri/tactile-writer/archive/refs/heads/main.zip" && break
-    echo "Download retry \$i..."
-    sleep 5
-  done
-  unzip -qo /tmp/tactile-writer.zip -d /tmp
-  mv /tmp/tactile-writer-main "\$DEPLOY_DIR"
 fi
+rsync -a --delete "\$SRC/" "\$DEPLOY_DIR/"
+mkdir -p "\$DEPLOY_DIR/backend/data"
+cp -a /tmp/writer-data-bak/* "\$DEPLOY_DIR/backend/data/" 2>/dev/null || true
 cd "\$DEPLOY_DIR"
 
 echo "==> Backend venv"
