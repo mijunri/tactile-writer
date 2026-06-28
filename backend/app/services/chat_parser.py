@@ -71,9 +71,9 @@ def _extract_html(text: str) -> str | None:
 
 def _clean_draft_content(text: str) -> str:
     text = _strip_meta(text)
-    heading = re.search(r"(^|\n)(#\s+.+)", text, re.MULTILINE)
+    heading = re.search(r"(?:^|\n|(?<=[^\n#]))(#\s+.+)", text, re.MULTILINE)
     if heading:
-        return text[heading.start(2) :].strip()
+        return text[heading.start(1) :].strip()
 
     lines = text.splitlines()
     for i, line in enumerate(lines):
