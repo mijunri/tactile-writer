@@ -12,7 +12,8 @@ echo "==> Deploying tactile-writer to ${ECS_IP}:${WRITER_PORT}"
 
 REMOTE_SCRIPT="/tmp/tactile-writer-deploy-$$.sh"
 cat > "$REMOTE_SCRIPT" <<REMOTE
-set -euo pipefail
+#!/bin/bash
+set -eu
 DEPLOY_DIR="/opt/tactile-writer"
 REPO_URL="https://github.com/mijunri/tactile-writer.git"
 WRITER_PORT=${WRITER_PORT}
