@@ -8,13 +8,16 @@ from app.deps import get_current_user
 from app.models import PlatformUser, SavedArticle
 from app.schemas import (
     ArticleCreate,
+    ArticleDraft,
     ArticleResponse,
     ArticleUploadRequest,
+    ChatHistoryResponse,
     ChatMessage,
     ChatSendRequest,
     SavedArticleListItem,
     SavedArticleResponse,
 )
+from app.services.chat_parser import build_chat_display, extract_article_draft, parse_tactile_history
 from app.services.tactile_service import get_agent_id, get_service_client, get_workspace_id
 from app.tactile_client import TactileAPIError
 
@@ -96,7 +99,7 @@ async def create_article(
     prompt = (
         f"请为【{data.platform}】撰写一篇文章。\n\n"
         f"主题/要求：{data.topic}\n\n"
-        "写完后整理为 HTML，并调用 moxie-save-article Skill 上传到墨写平台。"
+        "请直接输出文章内容（Markdown 格式），语气符合该平台读者习惯。"
     )
     try:
         item = await client.create_work_item(
@@ -136,7 +139,7 @@ async def send_message(
         raise HTTPException(status_code=e.status, detail=e.detail)
 
 
-@router.get("/work/{work_id}/chat/history", response_model=list[ChatMessage])
+@router.get("/work/{work_id}/chat/history", response_model=ChatHistoryResponse)
 async def chat_history(work_id: int, current_user: PlatformUser = Depends(get_current_user)):
     _ = current_user
     client = await get_service_client()
@@ -144,12 +147,15 @@ async def chat_history(work_id: int, current_user: PlatformUser = Depends(get_cu
         item = await client.get_work_item(work_id)
         session_id = item.get("session_id")
         if not session_id:
-            return []
+            return ChatHistoryResponse(messages=[], draft=ArticleDraft())
         history = await client.get_chat_history(session_id, rounds=50)
-        return [
-            ChatMessage(role=m.get("role", "assistant"), content=m.get("content", ""), index=m.get("index"))
-            for m in history.get("messages", [])
-        ]
+        parsed = parse_tactile_history(history)
+        draft_data = extract_article_draft(parsed, title=item.get("name", ""))
+        display = build_chat_display(parsed, draft_data["content"])
+        return ChatHistoryResponse(
+            messages=[ChatMessage(**m) for m in display],
+            draft=ArticleDraft(**draft_data),
+        )
     except TactileAPIError as e:
         raise HTTPException(status_code=e.status, detail=e.detail)
 
@@ -161,10 +167,34 @@ async def chat_status(work_id: int, current_user: PlatformUser = Depends(get_cur
     try:
         item = await client.get_work_item(work_id)
         session_id = item.get("session_id")
+        work_status = item.get("status", "pending")
+        sandbox_status = item.get("sandbox_status")
+
         if not session_id:
-            return {"status": "pending", "sandbox_status": item.get("sandbox_status")}
+            return {
+                "status": "pending",
+                "work_status": work_status,
+                "sandbox_status": sandbox_status,
+            }
+
         status = await client.get_chat_status(session_id)
-        return {**status, "work_status": item.get("status"), "sandbox_status": item.get("sandbox_status")}
+        if status.get("processing"):
+            chat_status = "running"
+        elif work_status in ("failed",):
+            chat_status = "failed"
+        elif work_status in ("idle",) and status.get("prepared"):
+            chat_status = "completed"
+        elif work_status in ("running", "scheduled", "pending"):
+            chat_status = "running"
+        else:
+            chat_status = "idle"
+
+        return {
+            **status,
+            "status": chat_status,
+            "work_status": work_status,
+            "sandbox_status": sandbox_status,
+        }
     except TactileAPIError as e:
         raise HTTPException(status_code=e.status, detail=e.detail)
 

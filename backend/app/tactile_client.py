@@ -81,7 +81,13 @@ class TactileClient:
         return await self._request("GET", "/agent", params={"workspace_id": workspace_id})
 
     async def create_work_item(
-        self, workspace_id: int, agent_id: int, content: str, name: str = "新文章"
+        self,
+        workspace_id: int,
+        agent_id: int,
+        content: str,
+        name: str = "新文章",
+        *,
+        machine_type: str = "ubuntu",
     ) -> dict:
         return await self._request(
             "POST",
@@ -91,6 +97,7 @@ class TactileClient:
                 "agent_id": agent_id,
                 "content": content,
                 "name": name,
+                "machine_type": machine_type,
             },
         )
 

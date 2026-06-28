@@ -77,6 +77,18 @@ class ChatMessage(BaseModel):
     index: int | None = None
 
 
+class ArticleDraft(BaseModel):
+    title: str = "未命名文章"
+    content: str = ""
+    html: str | None = None
+    word_count: int = 0
+
+
+class ChatHistoryResponse(BaseModel):
+    messages: list[ChatMessage]
+    draft: ArticleDraft
+
+
 class ScheduleCreate(BaseModel):
     name: str = Field(min_length=1, max_length=128)
     cron_expression: str = Field(description="Cron 表达式，如 0 8 * * *")
