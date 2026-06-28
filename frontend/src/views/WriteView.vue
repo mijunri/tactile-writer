@@ -1,8 +1,9 @@
 <template>
   <div class="write-page">
+    <!-- 新建文章 -->
     <div v-if="!articleId" class="new-article">
       <h2>对话写作</h2>
-      <p class="desc">告诉 AI 你想写什么，支持微信公众号、头条号等平台风格</p>
+      <p class="desc">左侧与 AI 对话，右侧实时预览成稿</p>
       <el-card>
         <el-form :model="form" label-width="80px" @submit.prevent="createArticle">
           <el-form-item label="平台">
@@ -34,35 +35,94 @@
       </el-card>
     </div>
 
-    <div v-else class="chat-area">
-      <div class="chat-header">
+    <!-- 左右分栏：对话 + 文章预览 -->
+    <div v-else class="split-layout">
+      <header class="write-header">
         <el-button text @click="$router.push('/write')">← 新建</el-button>
-        <span class="article-name">{{ article?.name || '文章' }}</span>
-        <el-tag v-if="article" :type="statusType" size="small">{{ statusText }}</el-tag>
-      </div>
-
-      <div ref="messagesEl" class="messages" v-loading="loadingHistory">
-        <div v-for="(msg, i) in messages" :key="i" :class="['msg', msg.role]">
-          <div class="msg-role">{{ msg.role === 'user' ? '我' : '写作助手' }}</div>
-          <div class="msg-content" v-html="renderMd(msg.content)"></div>
+        <div class="title-block">
+          <h1>{{ draft.title || article?.name || '对话写作' }}</h1>
+          <el-tag :type="statusTagType" size="small">{{ statusLabel }}</el-tag>
         </div>
-        <div v-if="!messages.length && !loadingHistory" class="empty-hint">
-          <el-empty description="AI 正在准备写作环境，请稍候..." />
-        </div>
-      </div>
+      </header>
 
-      <div class="input-area">
-        <el-input
-          v-model="input"
-          type="textarea"
-          :rows="3"
-          placeholder="继续对话，例如：把第二段改得更口语化一些..."
-          :disabled="sending"
-          @keydown.ctrl.enter="sendMessage"
-        />
-        <el-button type="primary" :loading="sending" :disabled="!input.trim()" @click="sendMessage">
-          发送 (Ctrl+Enter)
-        </el-button>
+      <div class="split-pane">
+        <!-- 左侧对话 -->
+        <section class="chat-panel">
+          <div class="panel-head">
+            <span class="panel-title">对话</span>
+            <span class="panel-hint">描述主题、风格，AI 在右侧生成文章</span>
+          </div>
+
+          <div ref="messagesEl" class="chat-messages" v-loading="loadingHistory">
+            <div v-if="!messages.length && !loadingHistory" class="empty-chat">
+              <p>AI 正在准备写作环境…</p>
+              <p class="hint">环境就绪后即可继续对话</p>
+            </div>
+
+            <div
+              v-for="(msg, i) in messages"
+              :key="i"
+              class="msg-row"
+              :class="msg.role"
+            >
+              <div class="avatar">{{ msg.role === 'user' ? '你' : '墨' }}</div>
+              <div class="bubble">
+                <div class="bubble-text">{{ msg.content }}</div>
+              </div>
+            </div>
+
+            <div v-if="chatStatus === 'running'" class="msg-row assistant">
+              <div class="avatar">墨</div>
+              <div class="bubble typing">
+                <span class="dot" /><span class="dot" /><span class="dot" />
+              </div>
+            </div>
+          </div>
+
+          <div class="chat-input-area">
+            <el-input
+              v-model="input"
+              type="textarea"
+              :rows="3"
+              placeholder="继续对话… Enter 发送，Ctrl+Enter 也可发送"
+              :disabled="!canSend"
+              @keydown="onKeydown"
+            />
+            <el-button type="primary" :loading="sending" :disabled="!canSend || !input.trim()" @click="sendMessage">
+              发送
+            </el-button>
+          </div>
+        </section>
+
+        <!-- 右侧文章预览 -->
+        <section class="article-panel">
+          <div class="panel-head">
+            <span class="panel-title">文章预览</span>
+            <span v-if="draft.word_count" class="word-count">{{ draft.word_count }} 字</span>
+          </div>
+
+          <div class="article-body">
+            <div v-if="!draft.content" class="empty-article">
+              <div class="empty-icon">📝</div>
+              <p>文章将在这里实时显示</p>
+              <p class="hint">与左侧 AI 对话后，成稿会自动出现在此区域</p>
+            </div>
+
+            <article v-else class="article-content">
+              <h2 v-if="draft.title" class="article-title">{{ draft.title }}</h2>
+              <div
+                v-if="draft.html"
+                class="article-html"
+                v-html="draft.html"
+              />
+              <div
+                v-else
+                class="article-md"
+                v-html="renderMd(draft.content)"
+              />
+            </article>
+          </div>
+        </section>
       </div>
     </div>
   </div>
@@ -83,25 +143,33 @@ const form = ref({ platform: '微信公众号', name: '新文章', topic: '' })
 const creating = ref(false)
 const article = ref(null)
 const messages = ref([])
+const draft = ref({ title: '', content: '', html: null, word_count: 0 })
 const input = ref('')
 const sending = ref(false)
 const loadingHistory = ref(false)
+const chatStatus = ref('pending')
 const messagesEl = ref(null)
 let pollTimer = null
 
-const statusText = computed(() => {
-  if (!article.value) return ''
-  const map = { pending: '准备中', running: '写作中', idle: '已完成', failed: '失败' }
-  return map[article.value.status] || article.value.status
+const statusLabel = computed(() => {
+  const map = {
+    pending: '准备中',
+    running: 'AI 写作中…',
+    completed: '已完成',
+    idle: '就绪',
+    failed: '失败',
+  }
+  return map[chatStatus.value] || chatStatus.value
 })
 
-const statusType = computed(() => {
-  if (!article.value) return 'info'
-  if (article.value.status === 'running') return 'warning'
-  if (article.value.status === 'idle') return 'success'
-  if (article.value.status === 'failed') return 'danger'
+const statusTagType = computed(() => {
+  if (chatStatus.value === 'running') return 'warning'
+  if (chatStatus.value === 'completed') return 'success'
+  if (chatStatus.value === 'failed') return 'danger'
   return 'info'
 })
+
+const canSend = computed(() => !sending.value && chatStatus.value !== 'running' && chatStatus.value !== 'pending')
 
 function renderMd(text) {
   if (!text) return ''
@@ -126,7 +194,7 @@ async function createArticle() {
 
 async function loadArticle() {
   if (!articleId.value) return
-  const { data } = await api.get(`/articles/${articleId.value}`)
+  const { data } = await api.get(`/articles/work/${articleId.value}`)
   article.value = data
 }
 
@@ -134,8 +202,9 @@ async function loadHistory() {
   if (!articleId.value) return
   loadingHistory.value = true
   try {
-    const { data } = await api.get(`/articles/${articleId.value}/chat/history`)
-    messages.value = data
+    const { data } = await api.get(`/articles/work/${articleId.value}/chat/history`)
+    messages.value = data.messages || []
+    draft.value = data.draft || { title: '', content: '', html: null, word_count: 0 }
     await nextTick()
     scrollBottom()
   } finally {
@@ -146,7 +215,8 @@ async function loadHistory() {
 async function pollStatus() {
   if (!articleId.value) return
   try {
-    const { data } = await api.get(`/articles/${articleId.value}/chat/status`)
+    const { data } = await api.get(`/articles/work/${articleId.value}/chat/status`)
+    chatStatus.value = data.status || data.work_status || 'idle'
     if (article.value) {
       article.value.status = data.work_status || article.value.status
       article.value.sandbox_status = data.sandbox_status
@@ -162,7 +232,7 @@ function scrollBottom() {
 }
 
 async function sendMessage() {
-  if (!input.value.trim() || sending.value) return
+  if (!input.value.trim() || !canSend.value) return
   const content = input.value.trim()
   input.value = ''
   messages.value.push({ role: 'user', content })
@@ -170,8 +240,9 @@ async function sendMessage() {
   scrollBottom()
   sending.value = true
   try {
-    await api.post(`/articles/${articleId.value}/chat/send`, { content })
-    await loadHistory()
+    await api.post(`/articles/work/${articleId.value}/chat/send`, { content })
+    chatStatus.value = 'running'
+    await pollStatus()
   } catch (e) {
     ElMessage.error(e.response?.data?.detail || '发送失败')
   } finally {
@@ -179,12 +250,19 @@ async function sendMessage() {
   }
 }
 
+function onKeydown(e) {
+  if ((e.key === 'Enter' && !e.shiftKey) || (e.key === 'Enter' && e.ctrlKey)) {
+    e.preventDefault()
+    sendMessage()
+  }
+}
+
 watch(articleId, async (id) => {
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null }
   if (id) {
     await loadArticle()
-    await loadHistory()
-    pollTimer = setInterval(pollStatus, 5000)
+    await pollStatus()
+    pollTimer = setInterval(pollStatus, 3000)
   }
 }, { immediate: true })
 
@@ -192,21 +270,247 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
 </script>
 
 <style scoped>
-.write-page { height: calc(100vh - 108px); display: flex; flex-direction: column; }
-.new-article { max-width: 700px; margin: 0 auto; }
+.write-page {
+  height: calc(100vh - 108px);
+  display: flex;
+  flex-direction: column;
+}
+
+.new-article {
+  max-width: 700px;
+  margin: 0 auto;
+}
+
 .new-article h2 { margin-bottom: 8px; }
 .desc { color: #909399; margin-bottom: 24px; }
-.chat-area { display: flex; flex-direction: column; height: 100%; background: #fff; border-radius: 12px; overflow: hidden; border: 1px solid #ebeef5; }
-.chat-header { display: flex; align-items: center; gap: 12px; padding: 12px 16px; border-bottom: 1px solid #ebeef5; }
-.article-name { font-weight: 600; flex: 1; }
-.messages { flex: 1; overflow-y: auto; padding: 16px; }
-.msg { margin-bottom: 16px; }
-.msg.user .msg-content { background: #ecf5ff; }
-.msg.assistant .msg-content { background: #f4f4f5; }
-.msg-role { font-size: 12px; color: #909399; margin-bottom: 4px; }
-.msg-content { padding: 12px 16px; border-radius: 8px; line-height: 1.7; font-size: 14px; }
-.msg-content :deep(h1), .msg-content :deep(h2), .msg-content :deep(h3) { margin: 12px 0 8px; }
-.msg-content :deep(p) { margin: 8px 0; }
-.input-area { padding: 12px 16px; border-top: 1px solid #ebeef5; display: flex; gap: 12px; align-items: flex-end; }
-.input-area .el-textarea { flex: 1; }
+
+.split-layout {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: #f5f7fa;
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.write-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  background: #fff;
+  border-bottom: 1px solid #e4e7ed;
+}
+
+.title-block {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+  min-width: 0;
+}
+
+.title-block h1 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.split-pane {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+  min-height: 0;
+}
+
+.chat-panel,
+.article-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: #fff;
+}
+
+.chat-panel {
+  border-right: 1px solid #e4e7ed;
+}
+
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  border-bottom: 1px solid #ebeef5;
+  background: #fafafa;
+}
+
+.panel-title {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.panel-hint,
+.word-count {
+  font-size: 12px;
+  color: #909399;
+}
+
+.chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  background: #f9fafb;
+}
+
+.empty-chat,
+.empty-article {
+  text-align: center;
+  color: #909399;
+  padding: 48px 24px;
+}
+
+.empty-chat .hint,
+.empty-article .hint {
+  font-size: 13px;
+  margin-top: 8px;
+}
+
+.empty-icon {
+  font-size: 40px;
+  margin-bottom: 12px;
+}
+
+.msg-row {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.msg-row.user {
+  flex-direction: row-reverse;
+}
+
+.avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: #409eff;
+  color: #fff;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.msg-row.user .avatar {
+  background: #67c23a;
+}
+
+.bubble {
+  max-width: 85%;
+}
+
+.bubble-text {
+  padding: 10px 14px;
+  border-radius: 12px;
+  line-height: 1.6;
+  font-size: 14px;
+  background: #fff;
+  border: 1px solid #ebeef5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.msg-row.user .bubble-text {
+  background: #ecf5ff;
+  border-color: #d9ecff;
+}
+
+.bubble.typing {
+  padding: 12px 16px;
+  background: #fff;
+  border: 1px solid #ebeef5;
+  border-radius: 12px;
+  display: flex;
+  gap: 4px;
+}
+
+.dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #c0c4cc;
+  animation: blink 1.2s infinite;
+}
+
+.dot:nth-child(2) { animation-delay: 0.2s; }
+.dot:nth-child(3) { animation-delay: 0.4s; }
+
+@keyframes blink {
+  0%, 80%, 100% { opacity: 0.3; }
+  40% { opacity: 1; }
+}
+
+.chat-input-area {
+  padding: 12px 16px;
+  border-top: 1px solid #ebeef5;
+  display: flex;
+  gap: 12px;
+  align-items: flex-end;
+  background: #fff;
+}
+
+.chat-input-area .el-textarea {
+  flex: 1;
+}
+
+.article-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px;
+}
+
+.article-content {
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.article-title {
+  font-size: 22px;
+  margin: 0 0 20px;
+  line-height: 1.4;
+}
+
+.article-md :deep(h1),
+.article-md :deep(h2),
+.article-md :deep(h3) {
+  margin: 16px 0 8px;
+}
+
+.article-md :deep(p) {
+  margin: 10px 0;
+  line-height: 1.8;
+}
+
+.article-md :deep(hr) {
+  margin: 20px 0;
+  border: none;
+  border-top: 1px solid #ebeef5;
+}
+
+@media (max-width: 900px) {
+  .split-pane {
+    grid-template-columns: 1fr;
+    grid-template-rows: 1fr 1fr;
+  }
+  .chat-panel {
+    border-right: none;
+    border-bottom: 1px solid #e4e7ed;
+  }
+}
 </style>

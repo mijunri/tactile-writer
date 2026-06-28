@@ -18,16 +18,12 @@ class AuthResponse(BaseModel):
     token: str
     email: str
     display_name: str
-    workspace_id: int | None = None
-    agent_id: int | None = None
 
 
 class UserResponse(BaseModel):
     id: int
     email: str
     display_name: str
-    workspace_id: int | None
-    agent_id: int | None
     create_time: datetime
 
 
@@ -47,6 +43,30 @@ class ArticleResponse(BaseModel):
     create_time: datetime | None = None
 
 
+class SavedArticleResponse(BaseModel):
+    id: int
+    title: str
+    platform: str
+    html_content: str
+    work_item_id: int | None = None
+    create_time: datetime
+
+
+class SavedArticleListItem(BaseModel):
+    id: int
+    title: str
+    platform: str
+    work_item_id: int | None = None
+    create_time: datetime
+
+
+class ArticleUploadRequest(BaseModel):
+    title: str = Field(min_length=1, max_length=500)
+    platform: str = Field(default="微信公众号", max_length=100)
+    html: str = Field(min_length=1)
+    work_item_id: int | None = None
+
+
 class ChatSendRequest(BaseModel):
     content: str = Field(min_length=1, max_length=10000)
 
@@ -55,6 +75,18 @@ class ChatMessage(BaseModel):
     role: str
     content: str
     index: int | None = None
+
+
+class ArticleDraft(BaseModel):
+    title: str = "未命名文章"
+    content: str = ""
+    html: str | None = None
+    word_count: int = 0
+
+
+class ChatHistoryResponse(BaseModel):
+    messages: list[ChatMessage]
+    draft: ArticleDraft
 
 
 class ScheduleCreate(BaseModel):

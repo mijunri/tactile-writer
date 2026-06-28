@@ -1,0 +1,12 @@
+{
+  "tactile_api_base": "https://cloudagentlab.com/api",
+  "service_email": "moxie-writer@imjson.cn",
+  "workspace_id": 10,
+  "workspace_name": "墨写空间",
+  "agent_id": 13,
+  "agent_name": "通用写作助手",
+  "skill_id": 24,
+  "skill_slug": "moxie-save-article",
+  "skill_version": "1.0.0",
+  "moxie_api_base": "http://118.31.57.25/writer/api"
+}
