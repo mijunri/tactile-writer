@@ -15,16 +15,31 @@ cat > "$REMOTE_SCRIPT" <<REMOTE
 #!/bin/bash
 set -eu
 DEPLOY_DIR="/opt/tactile-writer"
-REPO_URL="https://github.com/mijunri/tactile-writer.git"
 WRITER_PORT=${WRITER_PORT}
 
-echo "==> Clone or update repo"
-if [ -d "\$DEPLOY_DIR/.git" ]; then
-  cd "\$DEPLOY_DIR" && git pull origin main
+apt-get install -y -qq unzip curl rsync 2>/dev/null || true
+
+echo "==> Download repo"
+mkdir -p "\$DEPLOY_DIR"
+if [ -d "\$DEPLOY_DIR/backend" ]; then
+  echo "Existing install found, updating..."
+  cp -a "\$DEPLOY_DIR/backend/data" /tmp/writer-data-bak 2>/dev/null || true
+  curl -fsSL -o /tmp/tactile-writer.zip "https://github.com/mijunri/tactile-writer/archive/refs/heads/main.zip"
+  rm -rf /tmp/tactile-writer-main
+  unzip -qo /tmp/tactile-writer.zip -d /tmp
+  rsync -a --delete /tmp/tactile-writer-main/ "\$DEPLOY_DIR/"
+  mkdir -p "\$DEPLOY_DIR/backend/data"
+  cp -a /tmp/writer-data-bak/* "\$DEPLOY_DIR/backend/data/" 2>/dev/null || true
 else
-  git clone "\$REPO_URL" "\$DEPLOY_DIR"
-  cd "\$DEPLOY_DIR"
+  for i in 1 2 3; do
+    curl -fsSL -o /tmp/tactile-writer.zip "https://github.com/mijunri/tactile-writer/archive/refs/heads/main.zip" && break
+    echo "Download retry \$i..."
+    sleep 5
+  done
+  unzip -qo /tmp/tactile-writer.zip -d /tmp
+  mv /tmp/tactile-writer-main "\$DEPLOY_DIR"
 fi
+cd "\$DEPLOY_DIR"
 
 echo "==> Backend venv"
 cd "\$DEPLOY_DIR/backend"
