@@ -6,29 +6,18 @@ ECS_INSTANCE_ID="${IMJSON_ECS_INSTANCE_ID:-i-bp18kchcnvcke6ltimn2}"
 REGION="${ALIYUN_REGION:-cn-hangzhou}"
 JWT_SECRET="${JWT_SECRET:-$(openssl rand -hex 32)}"
 TACTILE_API_BASE="${TACTILE_API_BASE:-http://118.31.57.25/tactile/api}"
+WRITER_PORT="${WRITER_PORT:-8082}"
 
-echo "==> Deploying tactile-writer to ${ECS_IP} (${ECS_INSTANCE_ID})"
+echo "==> Deploying tactile-writer to ${ECS_IP}:${WRITER_PORT}"
 
 REMOTE_SCRIPT="/tmp/tactile-writer-deploy-$$.sh"
 cat > "$REMOTE_SCRIPT" <<REMOTE
 set -euo pipefail
 DEPLOY_DIR="/opt/tactile-writer"
 REPO_URL="https://github.com/mijunri/tactile-writer.git"
+WRITER_PORT=${WRITER_PORT}
 
-if ! command -v docker &>/dev/null; then
-  curl -fsSL https://get.docker.com | sh
-  systemctl enable docker && systemctl start docker
-fi
-
-if ! command -v docker-compose &>/dev/null && ! docker compose version &>/dev/null 2>&1; then
-  curl -L "https://github.com/docker/compose/releases/download/v2.32.4/docker-compose-\$(uname -s)-\$(uname -m)" -o /usr/local/bin/docker-compose
-  chmod +x /usr/local/bin/docker-compose
-fi
-
-COMPOSE="docker compose"
-command -v docker-compose &>/dev/null && COMPOSE="docker-compose"
-
-mkdir -p "\$DEPLOY_DIR"
+echo "==> Clone or update repo"
 if [ -d "\$DEPLOY_DIR/.git" ]; then
   cd "\$DEPLOY_DIR" && git pull origin main
 else
@@ -36,59 +25,103 @@ else
   cd "\$DEPLOY_DIR"
 fi
 
-cat > .env <<ENVFILE
+echo "==> Backend venv"
+cd "\$DEPLOY_DIR/backend"
+python3 -m venv venv
+source venv/bin/activate
+pip install -q --upgrade pip
+pip install -q -r requirements.txt
+
+echo "==> Frontend build"
+cd "\$DEPLOY_DIR/frontend"
+npm install --silent
+npm run build
+mkdir -p "\$DEPLOY_DIR/backend/static"
+cp -r dist/* "\$DEPLOY_DIR/backend/static/"
+
+echo "==> Environment"
+cat > "\$DEPLOY_DIR/backend/.env" <<ENVFILE
 TACTILE_API_BASE=${TACTILE_API_BASE}
 JWT_SECRET=${JWT_SECRET}
+DATABASE_URL=sqlite+aiosqlite:///./data/writer.db
+CORS_ORIGINS=*
 ENVFILE
+mkdir -p "\$DEPLOY_DIR/backend/data"
 
-\$COMPOSE down 2>/dev/null || true
-\$COMPOSE build --no-cache
-\$COMPOSE up -d
+echo "==> Systemd service"
+cat > /etc/systemd/system/tactile-writer.service <<UNIT
+[Unit]
+Description=Tactile Writer - AI Article Platform
+After=network.target
 
-NGINX_CONF="/etc/nginx/conf.d/tactile-writer.conf"
-if [ ! -f "\$NGINX_CONF" ]; then
-  cat > "\$NGINX_CONF" <<'NGINX'
-location /writer/ {
-    proxy_pass http://127.0.0.1:8080/;
-    proxy_http_version 1.1;
-    proxy_set_header Host \$host;
-    proxy_set_header X-Real-IP \$remote_addr;
-    proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-    proxy_read_timeout 300s;
-}
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/tactile-writer/backend
+Environment=PYTHONPATH=/opt/tactile-writer/backend
+EnvironmentFile=/opt/tactile-writer/backend/.env
+ExecStart=/opt/tactile-writer/backend/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port ${WRITER_PORT}
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+systemctl daemon-reload
+systemctl enable tactile-writer
+systemctl restart tactile-writer
+
+echo "==> Nginx config"
+NGINX_SNIPPET="/etc/nginx/snippets/tactile-writer.conf"
+cat > "\$NGINX_SNIPPET" <<NGINX
+    location /writer/ {
+        proxy_pass http://127.0.0.1:${WRITER_PORT}/;
+        proxy_http_version 1.1;
+        proxy_set_header Host \\\$host;
+        proxy_set_header X-Real-IP \\\$remote_addr;
+        proxy_set_header X-Forwarded-For \\\$proxy_add_x_forwarded_for;
+        proxy_read_timeout 300s;
+    }
 NGINX
+
+NGINX_SITE="/etc/nginx/sites-enabled/api.imjson.cn"
+if ! grep -q "tactile-writer" "\$NGINX_SITE" 2>/dev/null; then
+  sed -i '/# tactile-app-managed/i\\    # tactile-writer\\n    include /etc/nginx/snippets/tactile-writer.conf;' "\$NGINX_SITE"
   nginx -t && systemctl reload nginx
 fi
 
-sleep 5
-curl -sf http://127.0.0.1:8080/api/health && echo " health OK"
+sleep 3
+curl -sf "http://127.0.0.1:\${WRITER_PORT}/api/health" && echo " health OK"
 REMOTE
 
 if [ -n "${SSH_KEY:-}" ] && [ -f "$SSH_KEY" ]; then
   ssh -i "$SSH_KEY" -o StrictHostKeyChecking=no "root@${ECS_IP}" "bash -s" < "$REMOTE_SCRIPT"
 else
-  SCRIPT_B64=$(base64 -w0 "$REMOTE_SCRIPT")
-  python3 - "$SCRIPT_B64" "$ECS_INSTANCE_ID" "$REGION" <<'PY'
-import sys, json, base64, time, os
+  python3 - "$REMOTE_SCRIPT" "$ECS_INSTANCE_ID" "$REGION" <<'PY'
+import sys, json, time, os
 from aliyunsdkcore.client import AcsClient
 from aliyunsdkecs.request.v20140526.RunCommandRequest import RunCommandRequest
 from aliyunsdkecs.request.v20140526.DescribeInvocationsRequest import DescribeInvocationsRequest
 
-script_b64, instance_id, region = sys.argv[1], sys.argv[2], sys.argv[3]
+script_path, instance_id, region = sys.argv[1], sys.argv[2], sys.argv[3]
+with open(script_path) as f:
+    script = f.read()
+
 client = AcsClient(os.environ['ALIYUN_ACCESS_KEY_ID'], os.environ['ALIYUN_ACCESS_KEY_SECRET'], region)
 
 req = RunCommandRequest()
 req.set_accept_format('json')
 req.set_InstanceIds([instance_id])
-req.set_CommandContent(script_b64)
+req.set_CommandContent(script)
 req.set_Type('RunShellScript')
-req.set_Timeout(600)
+req.set_Timeout(900)
 resp = json.loads(client.do_action_with_exception(req))
 invoke_id = resp['InvokeId']
 print(f'Cloud Assistant invoke: {invoke_id}')
 
-for i in range(90):
-    time.sleep(10)
+for i in range(120):
+    time.sleep(15)
     dr = DescribeInvocationsRequest()
     dr.set_accept_format('json')
     dr.set_InvokeId(invoke_id)
@@ -100,16 +133,20 @@ for i in range(90):
         continue
     inv = invocations[0]
     status = inv.get('InvocationStatus')
-    output = inv.get('Output', '')
-    if output:
-        try:
-            print(base64.b64decode(output).decode('utf-8', errors='replace'))
-        except Exception:
-            print(output)
-    if status in ('Success', 'Failed', 'PartialSuccess', 'Stopped'):
-        print(f'Final status: {status}')
-        sys.exit(0 if status == 'Success' else 1)
-    print(f'Waiting... ({status}, {i+1}/90)')
+    instances = inv.get('InvokeInstances', {}).get('InvokeInstance', [])
+    if instances:
+        output = instances[0].get('Output', '')
+        if output:
+            import base64
+            try:
+                print(base64.b64decode(output).decode('utf-8', errors='replace'))
+            except Exception:
+                print(output)
+        exit_code = instances[0].get('ExitCode')
+        if status in ('Success', 'Failed', 'PartialSuccess', 'Stopped'):
+            print(f'Final status: {status}, exit={exit_code}')
+            sys.exit(0 if status == 'Success' else 1)
+    print(f'Waiting... ({status}, {i+1}/120)')
 PY
 fi
 
